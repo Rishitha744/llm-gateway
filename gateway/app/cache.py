@@ -1,21 +1,17 @@
-import hashlib
-import os
+"""Response cache, scoped per tenant (key derivation shared with workers)."""
+import json
 
-import redis.asyncio as redis
-
-r = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
-
-TTL_SECONDS = 3600
+from app import config
+from app.redis_client import r
+from common.cache_key import make_key
 
 
-def make_key(tenant_id: int, prompt: str) -> str:
-    digest = hashlib.sha256(prompt.encode()).hexdigest()
-    return f"cache:{tenant_id}:{digest}"
+async def get_cached(tenant_id: int, model: str, messages: list[dict], max_tokens: int):
+    raw = await r.get(make_key(tenant_id, model, messages, max_tokens))
+    return json.loads(raw) if raw else None
 
 
-async def get_cached(tenant_id: int, prompt: str):
-    return await r.get(make_key(tenant_id, prompt))
-
-
-async def set_cached(tenant_id: int, prompt: str, answer: str):
-    await r.set(make_key(tenant_id, prompt), answer, ex=TTL_SECONDS)
+async def set_cached(tenant_id: int, model: str, messages: list[dict], max_tokens: int, value: dict):
+    await r.set(
+        make_key(tenant_id, model, messages, max_tokens), json.dumps(value), ex=config.CACHE_TTL_S
+    )
